@@ -5,9 +5,10 @@ import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.*
 import okhttp3.*
 import okhttp3.logging.HttpLoggingInterceptor
+import ru.netology.coroutines.dto.Author
 import ru.netology.coroutines.dto.Comment
 import ru.netology.coroutines.dto.Post
-import ru.netology.coroutines.dto.PostWithComments
+import ru.netology.coroutines.dto.PostWithCommentsAndAuthors
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.EmptyCoroutineContext
@@ -17,6 +18,8 @@ import kotlin.coroutines.suspendCoroutine
 
 private val gson = Gson()
 private val BASE_URL = "http://127.0.0.1:9999"
+
+// Клиент с логированием и таймаутами для всех сетевых запросов
 private val client = OkHttpClient.Builder()
     .addInterceptor(HttpLoggingInterceptor(::println).apply {
         level = HttpLoggingInterceptor.Level.BODY
@@ -25,24 +28,47 @@ private val client = OkHttpClient.Builder()
     .build()
 
 fun main() {
+    // Запускаем корутину в скоупе без диспетчера по умолчанию
     with(CoroutineScope(EmptyCoroutineContext)) {
         launch {
             try {
+                // 1. Гребём посты
+                // 2. На каждый пост вешаем async-задачу на подгрузку комментов
+                // 3. awaitAll() ждёт, пока всё прилетит параллельно
                 val posts = getPosts(client)
                     .map { post ->
                         async {
-                            PostWithComments(post, getComments(client, post.id))
+                            //Получим все комментарии
+                            val comments = getComments(client, post.id)
+
+                            val commentsAuthors = comments.map {
+                                getAuthor(client, it.authorId)
+                            }
+                            // Получим всех авторов постов
+                            val author = getAuthor(client, post.authorId)
+                            PostWithCommentsAndAuthors(
+                                post,
+                                comments,
+                                author,
+                                commentsAuthors
+                            )
                         }
+
                     }.awaitAll()
+                // Выведем содержимое ответа в консоль
                 println(posts)
+
+
             } catch (e: Exception) {
                 e.printStackTrace()
             }
         }
     }
+    // Костыль: держим главный поток, чтобы корутины успели отработать
     Thread.sleep(30_000L)
 }
 
+// Обёртка над OkHttp Callback в suspend-функцию: превращает асинхронщину в линейный код
 suspend fun OkHttpClient.apiCall(url: String): Response {
     return suspendCoroutine { continuation ->
         Request.Builder()
@@ -61,6 +87,7 @@ suspend fun OkHttpClient.apiCall(url: String): Response {
     }
 }
 
+// Универсал: дёргает URL, проверяет статус, парсит JSON в нужный тип через Gson
 suspend fun <T> makeRequest(url: String, client: OkHttpClient, typeToken: TypeToken<T>): T =
     withContext(Dispatchers.IO) {
         client.apiCall(url)
@@ -74,8 +101,17 @@ suspend fun <T> makeRequest(url: String, client: OkHttpClient, typeToken: TypeTo
             }
     }
 
+// GET /api/slow/posts — список постов
 suspend fun getPosts(client: OkHttpClient): List<Post> =
     makeRequest("$BASE_URL/api/slow/posts", client, object : TypeToken<List<Post>>() {})
 
+// GET /api/slow/posts/{id}/comments — комменты к конкретному посту
 suspend fun getComments(client: OkHttpClient, id: Long): List<Comment> =
-    makeRequest("$BASE_URL/api/slow/posts/$id/comments", client, object : TypeToken<List<Comment>>() {})
+    makeRequest(
+        "$BASE_URL/api/slow/posts/$id/comments",
+        client,
+        object : TypeToken<List<Comment>>() {})
+
+// GET /api/slow/authors/{id} — авторы (судя по сигнатуре, список, хотя путь намекает на одного)
+suspend fun getAuthor(client: OkHttpClient, id: Long): Author =
+    makeRequest("$BASE_URL/api/slow/authors/$id", client, object : TypeToken<Author>() {})
