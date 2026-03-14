@@ -112,6 +112,6 @@ suspend fun getComments(client: OkHttpClient, id: Long): List<Comment> =
         client,
         object : TypeToken<List<Comment>>() {})
 
-// GET /api/slow/authors/{id} — авторы (судя по сигнатуре, список, хотя путь намекает на одного)
+// GET /api/slow/authors/{id} — авторы
 suspend fun getAuthor(client: OkHttpClient, id: Long): Author =
     makeRequest("$BASE_URL/api/slow/authors/$id", client, object : TypeToken<Author>() {})
